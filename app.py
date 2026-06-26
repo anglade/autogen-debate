@@ -181,10 +181,13 @@ def serve_frontend(path: str):
     )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         api_key = get_openai_api_key()
         print(f"OPENAI_API_KEY loaded: {api_key[:10]}...")
-    except RuntimeError:
-        print("WARNING: OPENAI_API_KEY is not set")
-    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5001)), debug=True, use_reloader=False, threaded=True)
+        port = int(os.environ.get('PORT', 5001))
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
+    except Exception as e:
+        print(f"FATAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
