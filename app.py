@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import traceback
 import uuid
+import os
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
