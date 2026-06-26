@@ -187,4 +187,4 @@ if __name__ == "__main__":
         print(f"OPENAI_API_KEY loaded: {api_key[:10]}...")
     except RuntimeError:
         print("WARNING: OPENAI_API_KEY is not set")
-    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5001)), debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5001)), debug=True, use_reloader=False, threaded=True)
