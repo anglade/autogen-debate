@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Debate</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>Agent Debate</h1>
+      <p class="subtitle">Five agents debate your question. You approve each step.</p>
+    </header>
+
+    <section id="setup" class="card setup">
+      <label for="question">Your question</label>
+      <textarea id="question" rows="3" placeholder="What should we decide, and why?"></textarea>
+      <button id="start-btn" class="btn btn-primary">Start debate</button>
+      <p id="setup-error" class="error hidden"></p>
+    </section>
+
+    <section id="debate" class="debate hidden">
+      <div class="card question-card">
+        <span class="label">Question</span>
+        <p id="debate-question"></p>
+      </div>
+
+      <div id="messages" class="messages"></div>
+
+      <div id="status-bar" class="status-bar">
+        <span id="status-text">Starting debate…</span>
+      </div>
+
+      <div id="human-panel" class="card human-panel hidden">
+        <h2>Your turn</h2>
+        <p class="human-hint">Approve the last response or add feedback to steer the agents.</p>
+        <label for="feedback">Feedback <span class="optional">(optional)</span></label>
+        <textarea id="feedback" rows="3" placeholder="Leave empty to continue without changes…"></textarea>
+        <div class="actions">
+          <button id="continue-btn" class="btn btn-primary">Continue</button>
+        </div>
+      </div>
+
+      <div id="complete-panel" class="card complete-panel hidden">
+        <h2>Debate complete</h2>
+        <p>The Judge has delivered the final verdict.</p>
+        <button id="new-debate-btn" class="btn btn-secondary">New debate</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const AGENT_COLORS = {
+      Proposer: "proposer",
+      Critic: "critic",
+      "Devil's Advocate": "devils-advocate",
+      Domain_Expert: "domain-expert",
+      "Domain Expert": "domain-expert",
+      Judge: "judge",
+      Human: "human",
+    };
+
+    let sessionId = null;
+    let pollTimer = null;
+    let renderedCount = 0;
+
+    const setup = document.getElementById("setup");
+    const debate = document.getElementById("debate");
+    const questionInput = document.getElementById("question");
+    const startBtn = document.getElementById("start-btn");
+    const setupError = document.getElementById("setup-error");
+    const debateQuestion = document.getElementById("debate-question");
+    const messagesEl = document.getElementById("messages");
+    const statusText = document.getElementById("status-text");
+    const humanPanel = document.getElementById("human-panel");
+    const feedbackInput = document.getElementById("feedback");
+    const continueBtn = document.getElementById("continue-btn");
+    const completePanel = document.getElementById("complete-panel");
+    const newDebateBtn = document.getElementById("new-debate-btn");
+
+    function showError(el, message) {
+      el.textContent = message;
+      el.classList.remove("hidden");
+    }
+
+    function hideError(el) {
+      el.classList.add("hidden");
+      el.textContent = "";
+    }
+
+    function agentClass(name) {
+      return AGENT_COLORS[name] || "default";
+    }
+
+    function renderMessage(msg) {
+      const article = document.createElement("article");
+      article.className = `message ${agentClass(msg.name)}`;
+      article.innerHTML = `
+        <header class="message-header">
+          <span class="agent-name">${escapeHtml(msg.name)}</span>
+          <span class="agent-role">${escapeHtml(msg.role)}</span>
+        </header>
+        <div class="message-body">${formatContent(msg.content)}</div>
+      `;
+      messagesEl.appendChild(article);
+      article.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function formatContent(text) {
+      return escapeHtml(text)
+        .replace(/\n/g, "<br>")
+        .replace(/^## (.+)$/gm, "<strong>$1</strong>");
+    }
+
+    function updateUI(data) {
+      while (renderedCount < data.messages.length) {
+        renderMessage(data.messages[renderedCount]);
+        renderedCount++;
+      }
+
+      humanPanel.classList.add("hidden");
+      completePanel.classList.add("hidden");
+      continueBtn.disabled = false;
+
+      if (data.status === "waiting_human") {
+        statusText.textContent = "Waiting for your input…";
+        humanPanel.classList.remove("hidden");
+      } else if (data.status === "complete") {
+        statusText.textContent = "Debate complete.";
+        completePanel.classList.remove("hidden");
+        stopPolling();
+      } else if (data.status === "error") {
+        statusText.textContent = `Error: ${data.error}`;
+        stopPolling();
+      } else if (data.status === "running") {
+        statusText.textContent = "Agents are debating…";
+      } else {
+        statusText.textContent = "Starting debate…";
+      }
+    }
+
+    async function pollStatus() {
+      if (!sessionId) return;
+      try {
+        const res = await fetch(`/api/debate/${sessionId}/status`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch status");
+        updateUI(data);
+      } catch (err) {
+        statusText.textContent = `Error: ${err.message}`;
+        stopPolling();
+      }
+    }
+
+    function startPolling() {
+      stopPolling();
+      pollStatus();
+      pollTimer = setInterval(pollStatus, 800);
+    }
+
+    function stopPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    startBtn.addEventListener("click", async () => {
+      hideError(setupError);
+      const question = questionInput.value.trim();
+      if (!question) {
+        showError(setupError, "Please enter a question.");
+        return;
+      }
+
+      startBtn.disabled = true;
+      try {
+        const res = await fetch("/api/debate/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to start debate");
+
+        sessionId = data.session_id;
+        renderedCount = 0;
+        messagesEl.innerHTML = "";
+        debateQuestion.textContent = question;
+        setup.classList.add("hidden");
+        debate.classList.remove("hidden");
+        feedbackInput.value = "";
+        startPolling();
+      } catch (err) {
+        showError(setupError, err.message);
+      } finally {
+        startBtn.disabled = false;
+      }
+    });
+
+    continueBtn.addEventListener("click", async () => {
+      continueBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/debate/${sessionId}/continue`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback: feedbackInput.value }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to continue");
+        feedbackInput.value = "";
+        humanPanel.classList.add("hidden");
+        statusText.textContent = "Agents are debating…";
+      } catch (err) {
+        statusText.textContent = `Error: ${err.message}`;
+      } finally {
+        continueBtn.disabled = false;
+      }
+    });
+
+    newDebateBtn.addEventListener("click", () => {
+      stopPolling();
+      sessionId = null;
+      debate.classList.add("hidden");
+      setup.classList.remove("hidden");
+      questionInput.value = "";
+      questionInput.focus();
+    });
+  </script>
+</body>
+</html>
